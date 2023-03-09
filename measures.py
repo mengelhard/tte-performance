@@ -4,8 +4,47 @@ import pandas as pd
 
 def main():
 
-    pass
+    df = pd.read_csv('datasets/support2_preprocessed.csv')
 
+    s = df['death'].values
+    t = df['d.time'].values
+
+    x = df.drop(['death', 'd.time'], axis=1).values
+
+    test_idx = len(df) * 4 // 5
+
+    s_train = s[:test_idx]
+    s_test = s[test_idx:]
+
+    t_train = t[:test_idx]
+    t_test = t[test_idx:]
+
+    x_train = x[:test_idx]
+    x_test = x[test_idx:]
+
+    from statsmodels.duration.hazard_regression import PHReg
+
+    mdl = PHReg(t_train, x_train, s_train).fit_regularized(alpha=.1)
+    pred_risk = mdl.predict(x_test).predicted_values
+
+    print('CI = %.3f' % concordance_index(s_test, t_test, pred_risk))
+    print('IPCW CI = %.3f' % ipcw_concordance_index(s_test, t_test, pred_risk, s_train, t_train))
+
+
+def hazard_components(s_true, t_true):
+
+    df = (
+        pd.DataFrame({'event': s_true, 'time': t_true})
+        .groupby('time')
+        .agg(['count', 'sum'])
+    )
+
+    t = df.index.values
+    d = df[('event', 'sum')].values
+    c = df[('event', 'count')].values
+    n = np.sum(c) - np.cumsum(c) + c
+
+    return t, d, n
 
 
 def kaplan_meier(s_true, t_true):
@@ -27,67 +66,98 @@ def nelson_aalen(s_true, t_true):
         
     return t, m, v
 
-
-def hazard_components(s_true, t_true):
-
-    df = (
-        pd.DataFrame({'event': s_true, 'time': t_true})
-        .groupby('time')
-        .agg(['count', 'sum'])
-    )
-
-    t = df.index.values
-    d = df[('event', 'sum')].values
-    c = df[('event', 'count')].values
-    n = np.sum(c) - np.cumsum(c) + c
-
-    return t, d, n
-
-
-def concordance_index(s_test, t_test, pred_risk):
+# TODO: figure out why interpolate output is (or can be) longer than new_x
+def interpolate(x, y, new_x):
     
-    valid_pairs = (
-        (t_test[:, np.newaxis] < t_test[np.newaxis, :]) &
-        s_test[:, np.newaxis]
-    )
+    s = pd.Series(data=y, index=x)
+    new_y = s.reindex(s.index.union(new_x)).interpolate()[new_x].values
     
-    correctly_ranked_pairs = valid_pairs & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
-    
-    return np.sum(correctly_ranked_pairs) / np.sum(valid_pairs)
+    return new_y
 
 
-def ipcw_concordance_index(s_train, t_train, s_test, t_test, pred_risk):
+def ipcw(s_train, t_train, t_test):
 
-    t, m, _ kaplan_meier(1 - s_train, t_train)
+    t, m, _ = kaplan_meier(1 - s_train, t_train)
     m = 1 - m
 
-    s = pd.Series(data=m, index=t)
-    pc = s.reindex(s.index.union(t_test)).interpolate()[t_test].values
+    return interpolate(t, m, t_test)
 
-    df.reindex(df.index.union(np.linspace(.11,.25,8)))
-    
-    valid_pairs = (
-        (t_test[:, np.newaxis] < t_test[np.newaxis, :]) &
-        s_test[:, np.newaxis]
+
+def valid_pairs(s, t, g1=None, g2=None):
+
+    g1 = g1 or np.ones_like(s)
+    g2 = g2 or np.ones_like(s)
+
+    return (
+        (t[:, np.newaxis] < t[np.newaxis, :]) &
+        s[:, np.newaxis] &
+        g1[:, np.newaxis] &
+        g2[np.newaxis, :]
     )
-    
-    correctly_ranked_pairs = valid_pairs & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
-    
-    return np.sum(correctly_ranked_pairs) / np.sum(valid_pairs)
 
 
-def xCI(s_test, t_test, group1_bool, group2_bool, pred_risk):
+def concordance_index(s_test, t_test, pred_risk, return_num_valid=False):
     
-    valid_pairs = (
-        (t_test[:, np.newaxis] < t_test[np.newaxis, :]) &
-        s_test[:, np.newaxis] &
-        group1_bool[:, np.newaxis] &
-        group2_bool[np.newaxis, :]
-    )
+    valid = valid_pairs(s_test, t_test)
+    correctly_ranked = valid & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
     
-    correctly_ranked_pairs = valid_pairs & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
+    if return_num_valid:
+        return np.sum(correctly_ranked) / np.sum(valid), np.sum(valid)
+    else:
+        return np.sum(correctly_ranked) / np.sum(valid)
+
+
+def ipcw_concordance_index(s_test, t_test, pred_risk, s_train, t_train, return_num_valid=False):
+
+    pc = ipcw(s_train, t_train, t_test)[:, np.newaxis]
     
-    return np.sum(correctly_ranked_pairs) / np.sum(valid_pairs)
+    valid = valid_pairs(s_test, t_test)    
+    correctly_ranked = valid & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
+
+    if return_num_valid:
+        return np.sum(pc * correctly_ranked) / np.sum(pc * valid), np.sum(pc * valid)
+    else:
+        return np.sum(pc * correctly_ranked) / np.sum(pc * valid)
+
+
+def xCI(s_test, t_test, pred_risk, g1_bool, g2_bool, return_num_valid=False):
+
+    valid = valid_pairs(s_test, t_test, g1_bool, g2_bool)    
+    correctly_ranked = valid & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
+
+    if return_num_valid:
+        return np.sum(correctly_ranked) / np.sum(valid), np.sum(valid)
+    else:
+        return np.sum(correctly_ranked) / np.sum(valid)
+
+
+def ipcw_xCI(s_test, t_test, pred_risk, g1_bool, g2_bool, s_train, t_train, return_num_valid=False):
+
+    pc = ipcw(s_train, t_train, t_test)[:, np.newaxis]
+    
+    valid = valid_pairs(s_test, t_test, g1_bool, g2_bool)    
+    correctly_ranked = valid & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
+    
+    if return_num_valid:
+        return np.sum(pc * correctly_ranked) / np.sum(pc * valid), np.sum(pc * valid)
+    else:
+        return np.sum(pc * correctly_ranked) / np.sum(pc * valid)
+
+
+def xxCI(s_test, t_test, pred_risk, g1_bool, g2_bool):
+
+    m1, n1 = xCI(s_test, t_test, pred_risk, g1_bool, g2_bool, return_num_valid=True)
+    m2, n2 = xCI(s_test, t_test, pred_risk, g2_bool, g1_bool, return_num_valid=True)
+    
+    return (m1 * n1 + m2 * n2) / (n1 + n2)
+
+
+def ipcw_xxCI(s_test, t_test, pred_risk, g1_bool, g2_bool, s_train, t_train):
+
+    m1, n1 = ipcw_xCI(s_test, t_test, pred_risk, g1_bool, g2_bool, s_train, t_train, return_num_valid=True)
+    m2, n2 = ipcw_xCI(s_test, t_test, pred_risk, g2_bool, g1_bool, s_train, t_train, return_num_valid=True)
+    
+    return (m1 * n1 + m2 * n2) / (n1 + n2)
 
 
 if __name__ == '__main__':
