@@ -47,12 +47,12 @@ def hazard_components(s_true, t_true):
     return t, d, n
 
 
-def kaplan_meier(s_true, t_true):
+def kaplan_meier(s_true, t_true, tol=1e-6):
 
     t, d, n = hazard_components(s_true, t_true)
 
     m = np.cumprod(1 - d / n)
-    v = (m ** 2) * np.cumsum(d / (n * (n - d)))
+    v = (m ** 2) * np.cumsum(d / (tol + n * (n - d)))
 
     return t, m, v
 
