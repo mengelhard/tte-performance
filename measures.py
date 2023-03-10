@@ -66,19 +66,19 @@ def nelson_aalen(s_true, t_true):
         
     return t, m, v
 
-# TODO: figure out why interpolate output is (or can be) longer than new_x
+
 def interpolate(x, y, new_x):
     
     s = pd.Series(data=y, index=x)
-    new_y = s.reindex(s.index.union(new_x)).interpolate()[new_x].values
+    new_y = s.reindex(s.index.union(new_x).unique()).interpolate()[new_x].values
     
     return new_y
 
 
-def ipcw(s_train, t_train, t_test):
+def censoring_km(s_train, t_train, t_test):
 
     t, m, _ = kaplan_meier(1 - s_train, t_train)
-    m = 1 - m
+    #m = 1 - m
 
     return interpolate(t, m, t_test)
 
@@ -109,15 +109,21 @@ def concordance_index(s_test, t_test, pred_risk, return_num_valid=False):
 
 def ipcw_concordance_index(s_test, t_test, pred_risk, s_train, t_train, return_num_valid=False):
 
-    pc = ipcw(s_train, t_train, t_test)[:, np.newaxis]
+    max_event_time = t_train[s_train == 1].max()
+
+    t_test_v = t_test[t_test < max_event_time]
+    s_test_v = s_test[t_test < max_event_time]
+    pred_risk_v = pred_risk[t_test < max_event_time]
+
+    ckm = censoring_km(s_train, t_train, t_test_v)[:, np.newaxis]
     
-    valid = valid_pairs(s_test, t_test)    
-    correctly_ranked = valid & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
+    valid = valid_pairs(s_test_v, t_test_v)    
+    correctly_ranked = valid & (pred_risk_v[:, np.newaxis] > pred_risk_v[np.newaxis, :])
 
     if return_num_valid:
-        return np.sum(pc * correctly_ranked) / np.sum(pc * valid), np.sum(pc * valid)
+        return np.sum((ckm ** -2) * correctly_ranked) / np.sum((ckm ** -2) * valid), np.sum((ckm ** -2) * valid)
     else:
-        return np.sum(pc * correctly_ranked) / np.sum(pc * valid)
+        return np.sum((ckm ** -2) * correctly_ranked) / np.sum((ckm ** -2) * valid)
 
 
 def xCI(s_test, t_test, pred_risk, g1_bool, g2_bool, return_num_valid=False):
@@ -133,15 +139,21 @@ def xCI(s_test, t_test, pred_risk, g1_bool, g2_bool, return_num_valid=False):
 
 def ipcw_xCI(s_test, t_test, pred_risk, g1_bool, g2_bool, s_train, t_train, return_num_valid=False):
 
-    pc = ipcw(s_train, t_train, t_test)[:, np.newaxis]
+    max_event_time = t_train[s_train == 1].max()
+
+    t_test_v = t_test[t_test < max_event_time]
+    s_test_v = s_test[t_test < max_event_time]
+    pred_risk_v = pred_risk[t_test < max_event_time]
+
+    ckm = censoring_km(s_train, t_train, t_test_v)[:, np.newaxis]
     
-    valid = valid_pairs(s_test, t_test, g1_bool, g2_bool)    
-    correctly_ranked = valid & (pred_risk[:, np.newaxis] > pred_risk[np.newaxis, :])
+    valid = valid_pairs(s_test_v, t_test_v, g1_bool, g2_bool)
+    correctly_ranked = valid & (pred_risk_v[:, np.newaxis] > pred_risk_v[np.newaxis, :])
     
     if return_num_valid:
-        return np.sum(pc * correctly_ranked) / np.sum(pc * valid), np.sum(pc * valid)
+        return np.sum((ckm ** -2) * correctly_ranked) / np.sum((ckm ** -2) * valid), np.sum((ckm ** -2) * valid)
     else:
-        return np.sum(pc * correctly_ranked) / np.sum(pc * valid)
+        return np.sum((ckm ** -2) * correctly_ranked) / np.sum((ckm ** -2) * valid)
 
 
 def xxCI(s_test, t_test, pred_risk, g1_bool, g2_bool):
