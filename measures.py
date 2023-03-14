@@ -61,20 +61,26 @@ def nelson_aalen(s_true, t_true, t_new=None):
         return t, m, v
 
 
-def interpolate(x, y, new_x):
+def interpolate(x, y, new_x, method='pad'):
     
-    s = pd.Series(data=y, index=x)
-    new_y = s.reindex(s.index.union(new_x).unique()).interpolate()[new_x].values
+    # s = pd.Series(data=y, index=x)
+    # new_y = (s
+    #     .reindex(s.index.union(new_x).unique())
+    #     .interpolate(method=method)[new_x]
+    #     .values
+    # )
     
-    return new_y
+    # return new_y
+
+    return np.interp(new_x, x, y)
 
 
 def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
 
     # NOTE: enter groups g1_bool and g2_bool for xAUC_t; omit for AUC_t
 
-    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test)
-    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test)
+    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test, dtype=bool)
+    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test, dtype=bool)
 
     # pred_risk can be 1d (static) or 2d (time-varying)
     if len(pred_risk.shape) == 1:
@@ -96,8 +102,8 @@ def xROCt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
 
     # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
 
-    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test)
-    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test)
+    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test, dtype=bool)
+    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test, dtype=bool)
 
     threshold = np.append(np.sort(pred_risk), np.infty)
 
@@ -119,24 +125,36 @@ def xROCt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
 def xCI(s_test, t_test, pred_risk,
         ipcw=False, s_train=None, t_train=None,
         g1_bool=None, g2_bool=None,
-        return_num_valid=False, tied_tol=1e-8):
+        return_num_valid=False,
+        tau=None, tied_tol=1e-8):
 
     # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
 
-    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test)
-    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test)
+    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test, dtype=bool)
+    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test, dtype=bool)
 
     if ipcw:
         
         assert (s_train is not None) and (t_train is not None), 's_train and t_train are required when ipcw=True'
+        
+        if tau == 'auto':
+            mask = t_test < t_train[s_train == 1].max()
+            #mask = t_test < t_train[s_train == 0].max()
+        
+        elif tau is not None:
+            mask = t_test < tau
 
-        before_last_cens = t_test < t_train[s_train == 0].max()
+        else:
+            mask = np.ones_like(t_test, dtype=bool)
 
         s_test, t_test, pred_risk, g1, g2 = (
-            arr[before_last_cens] for arr in (s_test, t_test, pred_risk, g1, g2)
+            arr[mask] for arr in (s_test, t_test, pred_risk, g1, g2)
         )
 
-        w = (1 / kaplan_meier(1 - s_train, t_train, t_test) ** 2)[:, np.newaxis]
+        pc = kaplan_meier(1 - s_train, t_train, t_test)
+        pc[s_test == 0] = 1.
+
+        w = (1. / pc)[:, np.newaxis]
 
     else:
 
@@ -152,10 +170,10 @@ def xCI(s_test, t_test, pred_risk,
     correctly_ranked = valid & (pred_risk[:, np.newaxis] > (pred_risk[np.newaxis, :] + tied_tol))
     tied = valid & (np.abs(pred_risk[:, np.newaxis] - pred_risk[np.newaxis, :]) <= tied_tol)
 
-    num_valid = np.sum(w * valid)
-    ci = np.sum(w * (correctly_ranked + 0.5 * tied)) / num_valid
+    num_valid = np.sum((w ** 2) * valid)
+    ci = np.sum((w ** 2) * (correctly_ranked + 0.5 * tied)) / num_valid
 
-    return (ci, num_valid) if return_num_valid else ci
+    return (ci, num_valid, w) if return_num_valid else ci
 
 
 def xxCI(s_test, t_test, pred_risk, g1_bool, g2_bool, ipcw=False, s_train=None, t_train=None):
