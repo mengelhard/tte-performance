@@ -79,18 +79,21 @@ def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
 
     # NOTE: enter groups g1_bool and g2_bool for xAUC_t; omit for AUC_t
 
-    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test, dtype=bool)
-    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test, dtype=bool)
-
     # pred_risk can be 1d (static) or 2d (time-varying)
     if len(pred_risk.shape) == 1:
         pred_risk = pred_risk[:, np.newaxis]
 
     # positives: s_test = 1 & t_test =< t
-    pos = (t_test[:, np.newaxis] <= times[np.newaxis, :]) & s_test[:, np.newaxis] & g1[:, np.newaxis]
+    pos = (t_test[:, np.newaxis] <= times[np.newaxis, :]) & s_test[:, np.newaxis]
+
+    if g1_bool is not None:
+        pos = pos & g1_bool[:, np.newaxis]
     
     # negatives: t_test > t
-    neg = (t_test[:, np.newaxis] > times[np.newaxis, :]) & g2[:, np.newaxis]
+    neg = (t_test[:, np.newaxis] > times[np.newaxis, :])
+
+    if g2_bool is not None:
+        neg = neg & g2_bool[:, np.newaxis]
 
     valid = pos[:, np.newaxis, :] & neg[np.newaxis, :, :]
     correctly_ranked = valid & (pred_risk[:, np.newaxis, :] > pred_risk[np.newaxis, :, :])
@@ -102,16 +105,19 @@ def xROCt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
 
     # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
 
-    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test, dtype=bool)
-    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test, dtype=bool)
-
     threshold = np.append(np.sort(pred_risk), np.infty)
 
     # positives: s_test = 1 & t_test =< t
-    pos = (t_test < time) & s_test & g1
+    pos = (t_test < time) & s_test
+
+    if g1_bool is not None:
+        pos = pos & g1_bool
     
     # negatives: t_test > t
-    neg = (t_test > time) & g2
+    neg = (t_test > time)
+
+    if g2_bool is not None:
+        neg = neg & g2_bool
 
     # prediction
     pred = pred_risk[:, np.newaxis] > threshold[np.newaxis, :]
@@ -122,50 +128,45 @@ def xROCt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
     return tpr, fpr, threshold
 
 
+def ipc_weights(s_train, t_train, s_test, t_test, tau=None):
+
+    if tau == 'auto':
+        mask = t_test < t_train[s_train == 1].max()
+        #mask = t_test < t_train[s_train == 0].max()
+    
+    elif tau is not None:
+        mask = t_test < tau
+
+    else:
+        mask = np.ones_like(t_test, dtype=bool)
+
+    pc = kaplan_meier(1 - s_train, t_train, t_test)
+    pc[s_test == 0] = 1.
+
+    w = 1. / pc
+    w[~mask] = 0.
+
+    return w
+
+
 def xCI(s_test, t_test, pred_risk,
-        ipcw=False, s_train=None, t_train=None,
+        weights=None,
         g1_bool=None, g2_bool=None,
         return_num_valid=False,
-        tau=None, tied_tol=1e-8):
+        tied_tol=1e-8):
 
     # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
 
-    g1 = g1_bool if g1_bool is not None else np.ones_like(s_test, dtype=bool)
-    g2 = g2_bool if g2_bool is not None else np.ones_like(s_test, dtype=bool)
+    w = weights if weights is not None else np.ones_like(s_test)
+    w = w[:, np.newaxis]
 
-    if ipcw:
-        
-        assert (s_train is not None) and (t_train is not None), 's_train and t_train are required when ipcw=True'
-        
-        if tau == 'auto':
-            mask = t_test < t_train[s_train == 1].max()
-            #mask = t_test < t_train[s_train == 0].max()
-        
-        elif tau is not None:
-            mask = t_test < tau
+    valid = (t_test[:, np.newaxis] < t_test[np.newaxis, :]) & s_test[:, np.newaxis]
 
-        else:
-            mask = np.ones_like(t_test, dtype=bool)
+    if g1_bool is not None:
+        valid = valid & g1_bool[:, np.newaxis]
 
-        s_test, t_test, pred_risk, g1, g2 = (
-            arr[mask] for arr in (s_test, t_test, pred_risk, g1, g2)
-        )
-
-        pc = kaplan_meier(1 - s_train, t_train, t_test)
-        pc[s_test == 0] = 1.
-
-        w = (1. / pc)[:, np.newaxis]
-
-    else:
-
-        w = 1.
-
-    valid = (
-        (t_test[:, np.newaxis] < t_test[np.newaxis, :]) &
-        s_test[:, np.newaxis] &
-        g1[:, np.newaxis] &
-        g2[np.newaxis, :]
-    )
+    if g2_bool is not None:
+        valid = valid & g2_bool[np.newaxis, :]
 
     correctly_ranked = valid & (pred_risk[:, np.newaxis] > (pred_risk[np.newaxis, :] + tied_tol))
     tied = valid & (np.abs(pred_risk[:, np.newaxis] - pred_risk[np.newaxis, :]) <= tied_tol)
@@ -173,7 +174,7 @@ def xCI(s_test, t_test, pred_risk,
     num_valid = np.sum((w ** 2) * valid)
     ci = np.sum((w ** 2) * (correctly_ranked + 0.5 * tied)) / num_valid
 
-    return (ci, num_valid, w) if return_num_valid else ci
+    return (ci, num_valid) if return_num_valid else ci
 
 
 def xxCI(s_test, t_test, pred_risk, g1_bool, g2_bool, ipcw=False, s_train=None, t_train=None):
