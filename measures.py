@@ -155,21 +155,26 @@ def xCI(s_test, t_test, pred_risk,
         return_num_valid=False,
         tied_tol=1e-8):
 
-    # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
-
     w = weights if weights is not None else np.ones_like(s_test)
-    w = w[:, np.newaxis]
 
-    valid = (t_test[:, np.newaxis] < t_test[np.newaxis, :]) & s_test[:, np.newaxis]
+    mask1 = (s_test == 1)
 
     if g1_bool is not None:
-        valid = valid & g1_bool[:, np.newaxis]
+        mask1 = mask1 & g1_bool
+
+    w = w[mask1, np.newaxis]
+
+    mask2 = np.ones_like(s_test, dtype=bool)
 
     if g2_bool is not None:
-        valid = valid & g2_bool[np.newaxis, :]
+        mask2 = mask2 & g2_bool
 
-    correctly_ranked = valid & (pred_risk[:, np.newaxis] > (pred_risk[np.newaxis, :] + tied_tol))
-    tied = valid & (np.abs(pred_risk[:, np.newaxis] - pred_risk[np.newaxis, :]) <= tied_tol)
+    valid = t_test[mask1, np.newaxis] < t_test[np.newaxis, mask2]
+
+    risk_diff = pred_risk[mask1, np.newaxis] - pred_risk[np.newaxis, mask2]
+
+    correctly_ranked = valid & (risk_diff > tied_tol)
+    tied = valid & (np.abs(risk_diff) <= tied_tol)
 
     num_valid = np.sum((w ** 2) * valid)
     ci = np.sum((w ** 2) * (correctly_ranked + 0.5 * tied)) / num_valid
