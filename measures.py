@@ -2,6 +2,11 @@ import numpy as np
 import pandas as pd
 
 
+# TODO add bootstrapping to AUC
+# TODO add average precision at t
+# TODO add xPRt
+
+
 def main():
 
     df_train = pd.read_csv('datasets/support2_train_outcomes.csv')
