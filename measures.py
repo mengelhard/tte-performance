@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 
 
-# TODO add bootstrapping to AUC
+# TODO add bootstrapping to AUC (done)
 # TODO add average precision at t
-# TODO add xPRt
+# TODO add xPRt (done)
 
 
 def main():
@@ -80,9 +80,70 @@ def interpolate(x, y, new_x, method='pad'):
     return np.interp(new_x, x, y)
 
 
-def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
+def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None, n_bootstrap_samples=None, random_state=None):
 
     # NOTE: enter groups g1_bool and g2_bool for xAUC_t; omit for AUC_t
+
+    if n_bootstrap_samples is not None:
+
+        rs = np.random.RandomState(seed=random_state)
+        indices = np.arange(len(s_test))
+
+        return [
+            xAUCt(
+                s_test[(sample := rs.choice(indices, len(indices), replace=True))],
+                t_test[sample],
+                pred_risk[sample],
+                times,
+                g1_bool=None if g1_bool is None else g1_bool[sample],
+                g2_bool=None if g2_bool is None else g2_bool[sample]
+            )
+            for i in range(n_bootstrap_samples)
+        ]
+
+    # pred_risk can be 1d (static) or 2d (time-varying)
+    if len(pred_risk.shape) == 1:
+        pred_risk = pred_risk[:, np.newaxis]
+
+    # positives: s_test = 1 & t_test =< t
+    pos = (t_test[:, np.newaxis] <= times[np.newaxis, :]) & s_test[:, np.newaxis]
+
+    if g1_bool is not None:
+        pos = pos & g1_bool[:, np.newaxis]
+    
+    # negatives: t_test > t
+    neg = (t_test[:, np.newaxis] > times[np.newaxis, :])
+
+    if g2_bool is not None:
+        neg = neg & g2_bool[:, np.newaxis]
+
+    valid = pos[:, np.newaxis, :] & neg[np.newaxis, :, :]
+    correctly_ranked = valid & (pred_risk[:, np.newaxis, :] > pred_risk[np.newaxis, :, :])
+
+    return np.sum(correctly_ranked, axis=(0, 1)) / np.sum(valid, axis=(0, 1))
+
+
+def xAPt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None, n_bootstrap_samples=None, random_state=None):
+
+    # NOTE: enter groups g1_bool and g2_bool for xAUC_t; omit for AUC_t
+    # NOTE: NOT IMPLEMENTED
+
+    if n_bootstrap_samples is not None:
+
+        rs = np.random.RandomState(seed=random_state)
+        indices = np.arange(len(s_test))
+
+        return [
+            xAPt(
+                s_test[(sample := rs.choice(indices, len(indices), replace=True))],
+                t_test[sample],
+                pred_risk[sample],
+                times,
+                g1_bool=None if g1_bool is None else g1_bool[sample],
+                g2_bool=None if g2_bool is None else g2_bool[sample]
+            )
+            for i in range(n_bootstrap_samples)
+        ]
 
     # pred_risk can be 1d (static) or 2d (time-varying)
     if len(pred_risk.shape) == 1:
@@ -131,6 +192,36 @@ def xROCt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
     fpr = np.sum(pred & neg[:, np.newaxis], axis=0) / np.sum(neg)
 
     return tpr, fpr, threshold
+
+
+def xPRt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
+
+    # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
+    # NOTE: group 2 does not affect the PR curve, at all.
+
+    threshold = np.append(np.sort(pred_risk), np.infty)
+
+    # positives: s_test = 1 & t_test =< t
+    pos = (t_test < time) & s_test
+
+    if g1_bool is not None:
+        pos = pos & g1_bool
+    
+    # negatives: t_test > t
+    neg = (t_test > time)
+
+    if g2_bool is not None:
+        neg = neg & g2_bool
+
+    # prediction
+    pred = pred_risk[:, np.newaxis] > threshold[np.newaxis, :]
+
+    tps = np.sum(pred & pos[:, np.newaxis], axis=0)
+
+    recall = tps / np.sum(pos)
+    precision = tps / np.sum(pred, axis=0)
+
+    return recall, precision, threshold
 
 
 def ipc_weights(s_train, t_train, s_test, t_test, tau=None):
