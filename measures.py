@@ -197,7 +197,7 @@ def xROCt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
 def xPRt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
 
     # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
-    # NOTE: group 2 does not affect the PR curve, at all.
+    # NOTE: not entirely clear how the xPR should be defined
 
     threshold = np.append(np.sort(pred_risk), np.infty)
 
@@ -217,11 +217,17 @@ def xPRt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
     pred = pred_risk[:, np.newaxis] > threshold[np.newaxis, :]
 
     tps = np.sum(pred & pos[:, np.newaxis], axis=0)
+    fps = np.sum(pred & neg[:, np.newaxis], axis=0)
 
-    recall = tps / np.sum(pos)
-    precision = tps / np.sum(pred, axis=0)
+    positives = np.sum(pos)
+    negatives = np.sum(neg)
 
-    return recall, precision, threshold
+    recall = tps / positives
+    precision = tps / (tps + fps)
+
+    prevalence = positives / (positives + negatives)
+
+    return recall, precision, threshold, prevalence
 
 
 def ipc_weights(s_train, t_train, s_test, t_test, tau=None):
