@@ -80,26 +80,63 @@ def interpolate(x, y, new_x, method='pad'):
     return np.interp(new_x, x, y)
 
 
-def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None, n_bootstrap_samples=None, random_state=None):
+def bootstrappable(func):
+
+    def bootstrap_func(*args, n_bootstrap_samples=None, random_state=None, return_std=False, **kwargs):
+
+        #n_bootstrap_samples = kwargs['n_bootstrap_samples'] if ('n_bootstrap_samples' in kwargs) else None
+        #random_state = kwargs['random_state'] if ('random_state' in kwargs) else None
+
+        #func_kwargs = {k: v for k, v in kwargs.items() if k not in ['n_bootstrap_samples', 'random_state']}
+
+        estimate = func(*args, **kwargs)
+
+        if n_bootstrap_samples is not None:
+
+            assert type(n_bootstrap_samples) is int, n_bootstrap_samples
+
+            rs = np.random.RandomState(seed=random_state)
+            
+            N = len(args[0])
+            indices = np.arange(N)
+
+            samples = []
+
+            for _ in range(n_bootstrap_samples):
+
+                sample_indices = rs.choice(indices, len(indices), replace=True)
+
+                func_args = [
+                    arg[sample_indices] if ((type(arg) is np.ndarray) and (len(arg) == N)) else arg
+                    for arg in args
+                ]
+                
+                func_kwargs = {
+                    kw: arg[sample_indices] if ((type(arg) is np.ndarray) and (len(arg) == N)) else arg
+                    for kw, arg in kwargs.items()
+                }
+
+                samples.append(func(*func_args, **func_kwargs))
+
+            if return_std:
+
+                return estimate, np.std(samples)
+
+            else:
+
+                return estimate, np.percentile(samples, 2.5), np.percentile(samples, 97.5)
+
+        else:
+
+            return estimate
+
+    return bootstrap_func
+
+
+@bootstrappable
+def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
 
     # NOTE: enter groups g1_bool and g2_bool for xAUC_t; omit for AUC_t
-
-    if n_bootstrap_samples is not None:
-
-        rs = np.random.RandomState(seed=random_state)
-        indices = np.arange(len(s_test))
-
-        return [
-            xAUCt(
-                s_test[(sample := rs.choice(indices, len(indices), replace=True))],
-                t_test[sample],
-                pred_risk[sample],
-                times,
-                g1_bool=None if g1_bool is None else g1_bool[sample],
-                g2_bool=None if g2_bool is None else g2_bool[sample]
-            )
-            for i in range(n_bootstrap_samples)
-        ]
 
     # pred_risk can be 1d (static) or 2d (time-varying)
     if len(pred_risk.shape) == 1:
@@ -123,27 +160,11 @@ def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None, n_bootst
     return np.sum(correctly_ranked, axis=(0, 1)) / np.sum(valid, axis=(0, 1))
 
 
-def xAPt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None, n_bootstrap_samples=None, random_state=None):
+@bootstrappable
+def xAPt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
 
     # NOTE: enter groups g1_bool and g2_bool for xAUC_t; omit for AUC_t
     # NOTE: NOT IMPLEMENTED
-
-    if n_bootstrap_samples is not None:
-
-        rs = np.random.RandomState(seed=random_state)
-        indices = np.arange(len(s_test))
-
-        return [
-            xAPt(
-                s_test[(sample := rs.choice(indices, len(indices), replace=True))],
-                t_test[sample],
-                pred_risk[sample],
-                times,
-                g1_bool=None if g1_bool is None else g1_bool[sample],
-                g2_bool=None if g2_bool is None else g2_bool[sample]
-            )
-            for i in range(n_bootstrap_samples)
-        ]
 
     # pred_risk can be 1d (static) or 2d (time-varying)
     if len(pred_risk.shape) == 1:
@@ -251,6 +272,7 @@ def ipc_weights(s_train, t_train, s_test, t_test, tau=None):
     return w
 
 
+@bootstrappable
 def xCI(s_test, t_test, pred_risk,
         weights=None,
         g1_bool=None, g2_bool=None,
