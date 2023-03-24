@@ -2,11 +2,6 @@ import numpy as np
 import pandas as pd
 
 
-# TODO add bootstrapping to AUC (done)
-# TODO add average precision at t
-# TODO add xPRt (done)
-
-
 def main():
 
     df_train = pd.read_csv('datasets/support2_train_outcomes.csv')
@@ -21,7 +16,11 @@ def main():
     pred_risk = df_test['pred_risk'].values
 
     print('CI = %.3f' % xCI(s_test, t_test, pred_risk))
-    print('IPCW CI = %.3f' % xCI(s_test, t_test, pred_risk, ipcw=True, s_train=s_train, t_train=t_train))
+    
+    print('IPCW CI = %.3f' % xCI(
+        s_test, t_test, pred_risk,
+        ipcw=True, s_train=s_train, t_train=t_train
+    ))
 
 
 def hazard_components(s_true, t_true):
@@ -44,8 +43,17 @@ def kaplan_meier(s_true, t_true, t_new=None):
 
     t, d, n = hazard_components(s_true, t_true)
 
-    m = np.cumprod(1 - np.divide(d, n, out=np.zeros(len(d)), where=n > 0))
-    v = (m ** 2) * np.cumsum(np.divide(d, n * (n - d), out=np.zeros(len(d)), where=n * (n - d) > 0))
+    m = np.cumprod(1 - np.divide(
+        d, n,
+        out=np.zeros(len(d)),
+        where=n > 0
+    ))
+    
+    v = (m ** 2) * np.cumsum(np.divide(
+        d, n * (n - d),
+        out=np.zeros(len(d)),
+        where=n * (n - d) > 0
+    ))
 
     if t_new is not None:
         return interpolate(t, m, t_new)
@@ -57,8 +65,18 @@ def nelson_aalen(s_true, t_true, t_new=None):
 
     t, d, n  = hazard_components(s_true, t_true)
 
-    m = np.cumsum(np.divide(d, n, out=np.zeros(len(d)), where=n > 0))
-    v = np.cumsum(np.divide((n - d) * d, (n - 1) * (n ** 2), out=np.zeros(len(d)), where=(n - 1) > 0))
+    m = np.cumsum(np.divide(
+        d, n,
+        out=np.zeros(len(d)),
+        where=n > 0
+    ))
+    
+    v = np.cumsum(np.divide(
+        (n - d) * d,
+        (n - 1) * (n ** 2),
+        out=np.zeros(len(d)),
+        where=(n - 1) > 0
+    ))
         
     if t_new is not None:
         return interpolate(t, m, t_new)
@@ -82,12 +100,7 @@ def interpolate(x, y, new_x, method='pad'):
 
 def bootstrappable(func):
 
-    def bootstrap_func(*args, n_bootstrap_samples=None, random_state=None, return_std=False, **kwargs):
-
-        #n_bootstrap_samples = kwargs['n_bootstrap_samples'] if ('n_bootstrap_samples' in kwargs) else None
-        #random_state = kwargs['random_state'] if ('random_state' in kwargs) else None
-
-        #func_kwargs = {k: v for k, v in kwargs.items() if k not in ['n_bootstrap_samples', 'random_state']}
+    def bootstrap_func(*args, n_bootstrap_samples=None, random_state=None, ci=95, **kwargs):
 
         estimate = func(*args, **kwargs)
 
@@ -107,24 +120,26 @@ def bootstrappable(func):
                 sample_indices = rs.choice(indices, len(indices), replace=True)
 
                 func_args = [
-                    arg[sample_indices] if ((type(arg) is np.ndarray) and (len(arg) == N)) else arg
+                    arg[sample_indices]
+                    if ((type(arg) is np.ndarray) and (len(arg) == N))
+                    else arg
                     for arg in args
                 ]
                 
                 func_kwargs = {
-                    kw: arg[sample_indices] if ((type(arg) is np.ndarray) and (len(arg) == N)) else arg
+                    kw: arg[sample_indices]
+                    if ((type(arg) is np.ndarray) and (len(arg) == N))
+                    else arg
                     for kw, arg in kwargs.items()
                 }
 
                 samples.append(func(*func_args, **func_kwargs))
 
-            if return_std:
-
-                return estimate, np.std(samples)
-
-            else:
-
-                return estimate, np.percentile(samples, 2.5), np.percentile(samples, 97.5)
+            return (
+                estimate,
+                np.percentile(samples, 50 - ci / 2.),
+                np.percentile(samples, 50 + ci / 2.)
+            )
 
         else:
 
@@ -134,9 +149,9 @@ def bootstrappable(func):
 
 
 @bootstrappable
-def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
+def xAUCt(s_test, t_test, pred_risk, times, pos_group=None, neg_group=None):
 
-    # NOTE: enter groups g1_bool and g2_bool for xAUC_t; omit for AUC_t
+    # NOTE: enter groups pos_group and neg_group for xAUC_t; omit for AUC_t
 
     # pred_risk can be 1d (static) or 2d (time-varying)
     if len(pred_risk.shape) == 1:
@@ -145,14 +160,14 @@ def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
     # positives: s_test = 1 & t_test =< t
     pos = (t_test[:, np.newaxis] <= times[np.newaxis, :]) & s_test[:, np.newaxis]
 
-    if g1_bool is not None:
-        pos = pos & g1_bool[:, np.newaxis]
+    if pos_group is not None:
+        pos = pos & pos_group[:, np.newaxis]
     
     # negatives: t_test > t
     neg = (t_test[:, np.newaxis] > times[np.newaxis, :])
 
-    if g2_bool is not None:
-        neg = neg & g2_bool[:, np.newaxis]
+    if neg_group is not None:
+        neg = neg & neg_group[:, np.newaxis]
 
     valid = pos[:, np.newaxis, :] & neg[np.newaxis, :, :]
     correctly_ranked = valid & (pred_risk[:, np.newaxis, :] > pred_risk[np.newaxis, :, :])
@@ -161,50 +176,47 @@ def xAUCt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
 
 
 @bootstrappable
-def xAPt(s_test, t_test, pred_risk, times, g1_bool=None, g2_bool=None):
+def xAPt(s_test, t_test, pred_risk, times, pos_group=None, neg_group=None):
 
-    # NOTE: enter groups g1_bool and g2_bool for xAUC_t; omit for AUC_t
-    # NOTE: NOT IMPLEMENTED
+    ap = []
+    prev = []
 
-    # pred_risk can be 1d (static) or 2d (time-varying)
-    if len(pred_risk.shape) == 1:
-        pred_risk = pred_risk[:, np.newaxis]
+    for idx, time in enumerate(times):
 
-    # positives: s_test = 1 & t_test =< t
-    pos = (t_test[:, np.newaxis] <= times[np.newaxis, :]) & s_test[:, np.newaxis]
+        # pred_risk can be 1d (static) or 2d (time-varying)
+        if len(pred_risk.shape) == 1:
+            prt = pred_risk
+        else:
+            prt = pred_risk[:, idx]
 
-    if g1_bool is not None:
-        pos = pos & g1_bool[:, np.newaxis]
-    
-    # negatives: t_test > t
-    neg = (t_test[:, np.newaxis] > times[np.newaxis, :])
+        recall, precision, threshold, prevalence = xPRt(
+            s_test, t_test, pred_risk, time,
+            pos_group=pos_group, neg_group=neg_group
+        )
+        
+        ap.append(-1 * np.sum(np.diff(recall) * np.array(precision)[:-1]))
+        prev.append(prevalence)
 
-    if g2_bool is not None:
-        neg = neg & g2_bool[:, np.newaxis]
-
-    valid = pos[:, np.newaxis, :] & neg[np.newaxis, :, :]
-    correctly_ranked = valid & (pred_risk[:, np.newaxis, :] > pred_risk[np.newaxis, :, :])
-
-    return np.sum(correctly_ranked, axis=(0, 1)) / np.sum(valid, axis=(0, 1))
+    return np.array(ap), np.array(prev)
 
 
-def xROCt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
+def xROCt(s_test, t_test, pred_risk, time, pos_group=None, neg_group=None):
 
-    # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
+    # NOTE: enter groups pos_group and neg_group for xROC_t; omit for ROC_t
 
     threshold = np.append(np.sort(pred_risk), np.infty)
 
     # positives: s_test = 1 & t_test =< t
     pos = (t_test < time) & s_test
 
-    if g1_bool is not None:
-        pos = pos & g1_bool
+    if pos_group is not None:
+        pos = pos & pos_group
     
     # negatives: t_test > t
     neg = (t_test > time)
 
-    if g2_bool is not None:
-        neg = neg & g2_bool
+    if neg_group is not None:
+        neg = neg & neg_group
 
     # prediction
     pred = pred_risk[:, np.newaxis] > threshold[np.newaxis, :]
@@ -215,24 +227,21 @@ def xROCt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
     return tpr, fpr, threshold
 
 
-def xPRt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
-
-    # NOTE: enter groups g1_bool and g2_bool for xROC_t; omit for ROC_t
-    # NOTE: not entirely clear how the xPR should be defined
+def xPRt(s_test, t_test, pred_risk, time, pos_group=None, neg_group=None):
 
     threshold = np.append(np.sort(pred_risk), np.infty)
 
     # positives: s_test = 1 & t_test =< t
     pos = (t_test < time) & s_test
 
-    if g1_bool is not None:
-        pos = pos & g1_bool
+    if pos_group is not None:
+        pos = pos & pos_group
     
     # negatives: t_test > t
     neg = (t_test > time)
 
-    if g2_bool is not None:
-        neg = neg & g2_bool
+    if neg_group is not None:
+        neg = neg & neg_group
 
     # prediction
     pred = pred_risk[:, np.newaxis] > threshold[np.newaxis, :]
@@ -244,7 +253,7 @@ def xPRt(s_test, t_test, pred_risk, time, g1_bool=None, g2_bool=None):
     negatives = np.sum(neg)
 
     recall = tps / positives
-    precision = tps / (tps + fps)
+    precision = np.divide(tps, tps + fps, out=np.ones_like(tps), where=(tps + fps) > 0)
 
     prevalence = positives / (positives + negatives)
 
@@ -275,7 +284,7 @@ def ipc_weights(s_train, t_train, s_test, t_test, tau=None):
 @bootstrappable
 def xCI(s_test, t_test, pred_risk,
         weights=None,
-        g1_bool=None, g2_bool=None,
+        pos_group=None, neg_group=None,
         return_num_valid=False,
         tied_tol=1e-8):
 
@@ -283,15 +292,15 @@ def xCI(s_test, t_test, pred_risk,
 
     mask1 = (s_test == 1)
 
-    if g1_bool is not None:
-        mask1 = mask1 & g1_bool
+    if pos_group is not None:
+        mask1 = mask1 & pos_group
 
     w = w[mask1, np.newaxis]
 
     mask2 = np.ones_like(s_test, dtype=bool)
 
-    if g2_bool is not None:
-        mask2 = mask2 & g2_bool
+    if neg_group is not None:
+        mask2 = mask2 & neg_group
 
     valid = t_test[mask1, np.newaxis] < t_test[np.newaxis, mask2]
 
@@ -306,19 +315,20 @@ def xCI(s_test, t_test, pred_risk,
     return (ci, num_valid) if return_num_valid else ci
 
 
-def xxCI(s_test, t_test, pred_risk, g1_bool, g2_bool, ipcw=False, s_train=None, t_train=None):
+@bootstrappable
+def xxCI(s_test, t_test, pred_risk, pos_group, neg_group, ipcw=False, s_train=None, t_train=None):
 
     m1, n1 = xCI(
         s_test, t_test, pred_risk,
         ipcw=ipcw, s_train=s_train, t_train=t_train,
-        g1_bool=g1_bool, g2_bool=g2_bool,
+        pos_group=pos_group, neg_group=neg_group,
         return_num_valid=True
     )
     
     m2, n2 = xCI(
         s_test, t_test, pred_risk,
         ipcw=ipcw, s_train=s_train, t_train=t_train,
-        g1_bool=g2_bool, g2_bool=g1_bool,
+        pos_group=neg_group, neg_group=pos_group,
         return_num_valid=True
     )
     
