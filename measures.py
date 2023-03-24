@@ -137,8 +137,8 @@ def bootstrappable(func):
 
             return (
                 estimate,
-                np.percentile(samples, 50 - ci / 2.),
-                np.percentile(samples, 50 + ci / 2.)
+                np.percentile(samples, 50 - ci / 2., axis=0),
+                np.percentile(samples, 50 + ci / 2., axis=0)
             )
 
         else:
@@ -176,7 +176,7 @@ def xAUCt(s_test, t_test, pred_risk, times, pos_group=None, neg_group=None):
 
 
 @bootstrappable
-def xAPt(s_test, t_test, pred_risk, times, pos_group=None, neg_group=None):
+def xAPt(s_test, t_test, pred_risk, times, pos_group=None, neg_group=None, return_prevalence=False):
 
     ap = []
     prev = []
@@ -197,7 +197,7 @@ def xAPt(s_test, t_test, pred_risk, times, pos_group=None, neg_group=None):
         ap.append(-1 * np.sum(np.diff(recall) * np.array(precision)[:-1]))
         prev.append(prevalence)
 
-    return np.array(ap), np.array(prev)
+    return (np.array(ap), np.array(prev)) if return_prevalence else np.array(ap)
 
 
 def xROCt(s_test, t_test, pred_risk, time, pos_group=None, neg_group=None):
@@ -253,7 +253,7 @@ def xPRt(s_test, t_test, pred_risk, time, pos_group=None, neg_group=None):
     negatives = np.sum(neg)
 
     recall = tps / positives
-    precision = np.divide(tps, tps + fps, out=np.ones_like(tps), where=(tps + fps) > 0)
+    precision = np.divide(tps, tps + fps, out=np.ones_like(tps, dtype=float), where=(tps + fps) > 0)
 
     prevalence = positives / (positives + negatives)
 
@@ -316,18 +316,18 @@ def xCI(s_test, t_test, pred_risk,
 
 
 @bootstrappable
-def xxCI(s_test, t_test, pred_risk, pos_group, neg_group, ipcw=False, s_train=None, t_train=None):
+def xxCI(s_test, t_test, pred_risk, weights=None, pos_group=None, neg_group=None):
 
     m1, n1 = xCI(
         s_test, t_test, pred_risk,
-        ipcw=ipcw, s_train=s_train, t_train=t_train,
+        weights=weights,
         pos_group=pos_group, neg_group=neg_group,
         return_num_valid=True
     )
     
     m2, n2 = xCI(
         s_test, t_test, pred_risk,
-        ipcw=ipcw, s_train=s_train, t_train=t_train,
+        weights=weights,
         pos_group=neg_group, neg_group=pos_group,
         return_num_valid=True
     )
