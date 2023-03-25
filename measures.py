@@ -121,14 +121,14 @@ def bootstrappable(func):
 
                 func_args = [
                     arg[sample_indices]
-                    if ((type(arg) is np.ndarray) and (len(arg) == N))
+                    if (hasattr(arg, '__len__') and (len(arg) == N))
                     else arg
                     for arg in args
                 ]
                 
                 func_kwargs = {
                     kw: arg[sample_indices]
-                    if ((type(arg) is np.ndarray) and (len(arg) == N))
+                    if (hasattr(arg, '__len__') and (len(arg) == N))
                     else arg
                     for kw, arg in kwargs.items()
                 }
