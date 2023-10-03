@@ -190,7 +190,7 @@ def xAPt(s_test, t_test, pred_risk, times, pos_group=None, neg_group=None, retur
             prt = pred_risk[:, idx]
 
         recall, precision, threshold, prevalence = xPRt(
-            s_test, t_test, pred_risk, time,
+            s_test, t_test, prt, time,
             pos_group=pos_group, neg_group=neg_group
         )
         
